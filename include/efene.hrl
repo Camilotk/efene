@@ -12,6 +12,7 @@
 -define(T(Line, Tag, Val), {tag, Line, Tag, Val}).
 % ltag
 -define(LTag(Line, Path, Val), {ltag, Line, Path, Val}).
+-define(Char(Line, Val), {ltag, Line, [{val, _, atom, c}],{val, _, string, [Val]}}).
 
 -define(Atom(Val), ?V(_, atom, Val)).
 -define(Atom(Line, Val), ?V(Line, atom, Val)).

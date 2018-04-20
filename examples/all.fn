@@ -71,12 +71,9 @@ fn types @public
     Cons = [a :: b]
     L = [2,3,4]
     L0 = [2,3,4,]
-    L1 = [1 :: L]
-    L10 = [1, :: L]
-    L2 = [0, 1 :: L]
-    L20 = [0, 1, :: L]
-    L3 = [0, 1, 2 :: L]
-    L30 = [0, 1, 2, :: L]
+    L1 = 1 :: L
+    L2 = 0 :: 1 :: L
+    L3 = 0 :: 1 :: 2 :: L
   case tuple:
     ()
     (1,)
@@ -111,6 +108,7 @@ fn types @public
     B1 = #b {1: 4, V: _, 3: {}, 4: float}
     Packet = nil
     Size = 6
+    #b {#c "@": _, Username: binary} = '@bob'
     #b {Size: 8, Data: {type: binary, size: Size}}
     #b {Version:4, IHL:4, TypeOfService:8, TotalLength:16,  Identification:16,
         FlagX:1, FlagD:1, FlagM:1,  FragmentOffset:13, TTL:8, Protocol:8,
