@@ -48,8 +48,17 @@ details_to_string({expected, Expected, got, Got}) ->
     io_lib:format("Expected ~p got ~s", [Expected, format_maybe_ast(Got)]);
 details_to_string(Other) -> format_maybe_ast(Other).
 
+to_bs(V) when is_list(V) -> list_to_binary(V);
+to_bs(V) when is_binary(V) -> V.
+
 normalize({error, {Line, fn_parser, Reason}}) ->
-    io_lib:format("~p: parse error: '~s'", [Line, Reason]);
+    BReason = to_bs(Reason),
+    case BReason of
+        <<"syntax error before: '\\n'">> ->
+            io_lib:format("~p: syntax error before end of line", [Line]);
+        _ ->
+            io_lib:format("~p: parse error: '~s'", [Line, Reason])
+    end;
 normalize({error, {Line, fn_lexer, {illegal, Reason}}}) ->
     io_lib:format("~p: illegal char ~p", [Line, Reason]);
 normalize({error, {Line, fn_lexer, {eof, _}}}) ->
