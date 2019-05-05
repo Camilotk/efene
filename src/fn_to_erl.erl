@@ -16,6 +16,9 @@
 -export([ast_to_ast/2, to_erl/3, to_erl/4, add_error/4, new_state/2, expected_got/2,
         lc_to_ast/4, state_map/3, kv_to_ast/3]).
 
+% used by pretty printer
+-export([map_op_reverse/1]).
+
 -include("efene.hrl").
 
 new_state(Module, Path) ->
@@ -413,6 +416,7 @@ ast_to_ast([H|T], Accum, State) ->
                end,
     ast_to_ast(T, NewAccum, State1).
 
+map_op('=') -> '=';
 map_op('+') -> '+';
 map_op('-') -> '-';
 map_op('*') -> '*';
@@ -442,6 +446,37 @@ map_op('==') -> '==';
 map_op('is') -> '=:=';
 map_op('!=') -> '/=';
 map_op('isnt') -> '=/='.
+
+map_op_reverse('=') -> '=';
+map_op_reverse('+') -> '+';
+map_op_reverse('-') -> '-';
+map_op_reverse('*') -> '*';
+map_op_reverse('/') -> '/';
+map_op_reverse('div') -> '//';
+map_op_reverse('rem') -> '%';
+map_op_reverse('bor') -> '|';
+map_op_reverse('band') -> '&';
+map_op_reverse('bxor') -> '^';
+map_op_reverse('bsr') -> '>>';
+map_op_reverse('bsl') -> '<<';
+map_op_reverse('bnot') -> '~';
+map_op_reverse('andalso') -> 'and';
+map_op_reverse('and') -> 'andd';
+map_op_reverse('orelse') -> 'or';
+map_op_reverse('or') -> 'orr';
+map_op_reverse('xor') -> 'xor';
+map_op_reverse('!') -> '!';
+map_op_reverse('not') -> 'not';
+map_op_reverse('++') -> '++';
+map_op_reverse('--') -> '--';
+map_op_reverse('<') -> '<';
+map_op_reverse('=<') -> '<=';
+map_op_reverse('>') -> '>';
+map_op_reverse('>=') -> '>=';
+map_op_reverse('==') -> '==';
+map_op_reverse('=:=') -> 'is';
+map_op_reverse('/=') -> '!=';
+map_op_reverse('=/=') -> 'isnt'.
 
 list_to_cons_list(Line, Val, State) ->
     list_to_cons_list_r(Line, lists:reverse(Val), {nil, Line}, State).

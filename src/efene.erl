@@ -63,9 +63,14 @@ to_mod(Path) ->
     end.
 
 pprint(Path) ->
-    case to_ast(Path) of
-        {ok, Ast} -> io:format("~s", [fn_pp:print(Ast)]);
-        Other -> io:format("Error: ~p", [Other])
+    case from_erl(Path) of
+        {ok, Ast} -> 
+            try
+                io:format("~s~n", [fn_pp:format(Ast)])
+            catch T:E:S ->
+                io:format("Error formatting ~p: ~p:~p~n~p~n", [Path, T, E, S])
+            end;
+        Other -> io:format("Error: ~p~n", [Other])
     end.
 
 to_erl(Path) ->

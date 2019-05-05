@@ -13,332 +13,669 @@
 %% limitations under the License.
 
 -module(fn_pp).
--export([print/1]).
+-export([format/1, layout/1]).
+-import(prettypr, [sep/1, beside/2, empty/0, text/1, floating/1, nest/2, par/2,
+                   above/2, follow/3]).
+-import(erl_parse, [inop_prec/1, preop_prec/1]).
+
+% used on tests
+-export([pp_guards/2, default_ctx/0]).
 
 -include("efene.hrl").
 
-ind(0) -> "";
-ind(1) -> "  ";
-ind(2) -> "    ";
-ind(3) -> "      ";
-ind(4) -> "        ";
-ind(Indent) -> string:copies("  ", Indent).
-
-fmt(Str, Fmt, true, Indent, Args) -> [Str, ind(Indent), io_lib:format(Fmt, Args), "\n"];
-fmt(Str, Fmt, false, Indent, Args) -> [Str, ind(Indent), io_lib:format(Fmt, Args)].
-
-print(Nodes) when is_list(Nodes) -> print(Nodes, "", true, 0, [], "\n");
-print(Node) -> print_single(Node).
-
-%print(Nodes, Indent) -> print(Nodes, "", true, Indent, [], "\n").
-print_single(Node) -> print(Node, "", false, 0).
-print_single(Node, Indent) -> string:strip(lists:flatten(print(Node, "", true, Indent)), left).
-
-print(Nodes, Str, Nl, Indent) when is_list(Nodes) -> print(Nodes, Str, Nl, Indent, [], "");
-
-print({attr, _L, Path, noparams, noresult}, Str, Nl, Indent) ->
-    fmt(Str, "@~s", Nl, Indent, [print_path(Path)]);
-print({attr, _L, Path, Params, noresult}, Str, Nl, Indent) ->
-    fmt(Str, "@~s(~s)", Nl, Indent, [print_path(Path), print_seq(Params)]);
-print({attr, _L, Path, noparams, Result}, Str, Nl, Indent) ->
-    fmt(Str, "@~s -> ~s", Nl, Indent, [print_path(Path), print_single(Result)]);
-print({attr, _L, Path, Params, Result}, Str, Nl, Indent) ->
-    fmt(Str, "@~s(~s) -> ~s", Nl, Indent, [print_path(Path), print_seq(Params), print_single(Result)]);
-
-print(?E(_L, call_do, {first, Call, Fun}), Str, Nl, Indent) ->
-    fmt(Str, "~s <- ~s", Nl, Indent, [print(Call), print(Fun)]);
-print(?E(_L, call_do, {last, Call, Fun}), Str, Nl, Indent) ->
-    fmt(Str, "~s <<- ~s", Nl, Indent, [print(Call), print(Fun)]);
-
-print(?E(_L, call_thread, {InitialVal, Calls}), Str, Nl, Indent) ->
-    fmt(Str, "~s~n~s", Nl, Indent,
-        [print_single(InitialVal), print_thread_calls(Calls, Indent + 1)]);
-
-print(?S(_L, list, Val), Str, Nl, Indent) ->
-    fmt(Str, "[~s]", Nl, Indent, [print_seq(Val)]);
-
-print(?S(_L, map, {Var, KVs}), Str, Nl, Indent) ->
-    fmt(Str, "~s#{~s}", Nl, Indent, [print_single(Var), print_kvs(KVs)]);
-print(?S(_L, map, KVs), Str, Nl, Indent) ->
-    fmt(Str, "{~s}", Nl, Indent, [print_kvs(KVs)]);
-
-print(?LTag(_L, [?Atom(r), ?Atom(RecordName)], ?S(_MapLine, map, {Var, KVs})), Str, Nl, Indent) ->
-    fmt(Str, "#r.~p ~s#{~s}", Nl, Indent, [RecordName, print_single(Var), print_kvs(KVs)]);
-
-print(?LTag(_L, [?Atom(r), ?Atom(RecordName)], ?S(_MapLine, map, KVs)), Str, Nl, Indent) ->
-    fmt(Str, "#r.~p {~s}", Nl, Indent, [RecordName, print_kvs(KVs)]);
-
-print(?LTag(_L, [?Atom(c)], ?V(_StrLine, string, [Char])), Str, Nl, Indent) ->
-    fmt(Str, "#c \"~c\"", Nl, Indent, [Char]);
-print(?LTag(_L, [?Atom(atom)], ?V(_StrLine, string, AtomStr)), Str, Nl, Indent) ->
-    fmt(Str, "#atom ~s", Nl, Indent, [escape_string(AtomStr)]);
-
-print(?LTag(_L, Path, Val), Str, Nl, Indent) ->
-    fmt(Str, "#~s ~s", Nl, Indent, [print_path(Path), print_single(Val, Indent)]);
-
-print(?T(_L, Path, Val), Str, Nl, Indent) ->
-    fmt(Str, "^~s ~s", Nl, Indent, [print_path(Path), print_single(Val, Indent)]);
-
-print({kv, _L, Key, Val}, Str, Nl, Indent) ->
-    fmt(Str, "~s: ~s", Nl, Indent, [print_single(Key), print_single(Val)]);
-
-print({kvmatch, _L, Key, Val}, Str, Nl, Indent) ->
-    fmt(Str, "~s = ~s", Nl, Indent, [print_single(Key), print_single(Val)]);
-
-print(?S(_L, tuple, []), Str, Nl, Indent)   ->
-    fmt(Str, "()", Nl, Indent, []);
-print(?S(_L, tuple, [Item]), Str, Nl, Indent)   ->
-    fmt(Str, "(~s,)", Nl, Indent, [print_single(Item)]);
-print(?S(_L, tuple, Val), Str, Nl, Indent)   ->
-    fmt(Str, "(~s)", Nl, Indent, [print_seq(Val)]);
-print(?S(_L, cons, {H, T}), Str, Nl, Indent) ->
-    fmt(Str, "[~s::~s]", Nl, Indent, [print_single(H), print_single(T)]);
-
-print(?V(_L, fn_ref, {[Mod, Fun], Arity}), Str, Nl, Indent) ->
-    fmt(Str, "fn ~s.~s:~s", Nl, Indent, [print_single(Mod), print_single(Fun), print_single(Arity)]);
-
-print(?V(_L, fn_ref, {[Fun], Arity}), Str, Nl, Indent) ->
-    fmt(Str, "fn ~s:~s", Nl, Indent, [print_single(Fun), print_single(Arity)]);
-
-print(?E(_L, 'when', Clauses), Str, _Nl, Indent) ->
-    fmt(Str, "when ~s~send", true, Indent, [print_wclauses(Clauses, Indent),
-                                           ind(Indent)]);
-
-print({wcond, _L, Cond, Body}, Str, _Nl, Indent) ->
-    fmt(Str, "else ~s:~n~s", false, Indent, [print_guard(Cond), print_body(Body, Indent + 1)]);
-
-print({welse, _L, Body}, Str, _Nl, Indent) ->
-    fmt(Str, "else:~n~s", false, Indent, [print_body(Body, Indent + 1)]);
-
-print(?E(_L, 'for', {Qualifiers, Body}), Str, _Nl, Indent) ->
-    fmt(Str, "for~s:~n~s~send", true, Indent,
-        [print_qualifiers(Qualifiers, Indent + 1),
-         print_body(Body, Indent + 1), ind(Indent)]);
-
-print(?E(_L, 'try', {Body, Catch, After}), Str, Nl, Indent) ->
-    fmt(Str, "try~n~s~s~s~send", true, Indent, [print_body(Body, Indent + 1),
-                                     print_catch(Catch, Nl, Indent),
-                                     print_after(After, Indent),
-                                     ind(Indent)]);
-
-print(?E(_L, 'receive', {?E(_CLine, 'case', Clauses), After}), Str, Nl, Indent) ->
-    fmt(Str, "receive~n~s~s~send", true, Indent, [print_clauses(Clauses, Nl, Indent + 1),
-                                              print_after(After, Indent),
-                                              ind(Indent)]);
-
-print(?E(_L, switch, {Value, ?E(_CaseLine, 'case', Clauses)}), Str, Nl, Indent) ->
-    fmt(Str, "match ~s:~n~s~send", true, Indent, [print_single(Value),
-                                             print_clauses(Clauses, Nl, Indent + 1),
-                                             ind(Indent)]);
-
-print({cmatch, _L, {[], nowhen, Body}}, Str, Nl, Indent) ->
-    fmt(Str, "case:~n~s", false, Indent, [print(Body, "", Nl, Indent + 1)]);
-print({cmatch, _L, {Conds, When, Body}}, Str, Nl, Indent) ->
-    fmt(Str, "case ~s~s:~n~s", false, Indent,
-        [print_conds(Conds), print_when(When), print(Body, "", Nl, Indent + 1)]);
-
-print({celse, _L, Body}, Str, _Nl, Indent) ->
-    fmt(Str, "else:~n~s", false, Indent, [print_body(Body, Indent + 1)]);
-
-print(?E(_L, 'begin', Body), Str, _Nl, Indent) ->
-    fmt(Str, "begin~n~s~send", true, Indent,
-        [print_body(Body, Indent + 1), ind(Indent)]);
-
-print(?E(_L, fn, {Name, [], ?E(_CLine, 'case', Cases)}), Str, Nl, Indent) ->
-    fmt(Str, "fn ~s~n~s~send", true, Indent,
-        [print_single(Name), print_clauses(Cases, Nl, Indent + 1), ind(Indent)]);
-
-print(?E(_L, fn, {Name, Attrs, ?E(_CLine, 'case', Cases)}), Str, Nl, Indent) ->
-    fmt(Str, "fn ~s~n~s~n~s~send", true, Indent,
-        [print_single(Name), print(Attrs, "", Nl, Indent + 1),
-         print_clauses(Cases, Nl, Indent + 1), ind(Indent)]);
-
-print(?E(_L, fn, ?E(_CLine, 'case', Cases)), Str, Nl, Indent) ->
-    fmt(Str, "fn~n~s~send", true, Indent,
-        [print_clauses(Cases, Nl, Indent + 1), ind(Indent)]);
-
-print(?E(_L, fn, {?V(_VLine, var, _RawName)=Name, ?E(_CLine, 'case', Cases)}), Str, Nl, Indent) ->
-    fmt(Str, "fn ~s~n~s~send", true, Indent,
-        [print_single(Name), print_clauses(Cases, Nl, Indent + 1), ind(Indent)]);
-
-print(?E(_L, call, {[Mod, Fun], Args}), Str, Nl, Indent) ->
-    fmt(Str, "~s.~s(~s)", Nl, Indent,
-        [print_single(Mod), print_single(Fun), print_seq(Args)]);
-
-print(?E(_L, call, {[Fun], Args}), Str, Nl, Indent) ->
-    fmt(Str, "~s(~s)", Nl, Indent, [print_single(Fun), print_seq(Args)]);
-
-print(?O(_L, Op, Left, Right), Str, Nl, Indent) ->
-    WrapLeft = should_wrap(Op, left, Left),
-    WrapRight = should_wrap(Op, right, Right),
-    IndentRight = should_indent_right(Right),
-    RightStr = if IndentRight -> print_single(Right, Indent);
-                  true -> print_single(Right)
-               end,
-    LeftFmt = if WrapLeft -> "(~s)"; true -> "~s" end,
-    RightFmt = if WrapRight -> "(~s)"; true -> "~s" end,
-    Format = LeftFmt ++ " ~s " ++ RightFmt,
-    fmt(Str, Format, Nl, Indent,
-        [print_single(Left), atom_to_list(Op), RightStr]);
-
-print(?V(_L, atom, Val), Str, Nl, Indent)    ->
-    AtomStr = atom_to_list(Val),
-    [FirstChar|_] = AtomStr,
-    IsSpecialChar = fun (C) when C >= $a, C =< $z; C >= $0, C =< $9;C == $_ -> false;
-                         (_) -> true
-                     end,
-    IsReserved = fn_lexer:is_reserved(AtomStr),
-    HasSpecialChar = ((FirstChar >= $0 andalso FirstChar =< $9) orelse
-                      lists:any(IsSpecialChar, AtomStr)),
-    ShouldQuote =  IsReserved orelse HasSpecialChar,
-    if ShouldQuote ->
-        fmt(Str, "`~s`", Nl, Indent, [AtomStr]);
-       true ->
-        fmt(Str, "~s", Nl, Indent, [AtomStr])
-    end;
-print(?V(_L, integer, Val), Str, Nl, Indent) ->
-    fmt(Str, "~p", Nl, Indent, [Val]);
-print(?V(_L, float, Val), Str, Nl, Indent)   ->
-    fmt(Str, "~p", Nl, Indent, [Val]);
-print(?V(_L, boolean, Val), Str, Nl, Indent) ->
-    fmt(Str, "~s", Nl, Indent, [atom_to_list(Val)]);
-print(?V(_L, var, Val), Str, Nl, Indent)     ->
-    fmt(Str, "~s", Nl, Indent, [atom_to_list(Val)]);
-print(?V(_L, string, Val), Str, Nl, Indent)  ->
-    fmt(Str, "~s", Nl, Indent, [escape_string(Val)]);
-print(?V(_L, bstring, Val), Str, Nl, Indent) ->
-    fmt(Str, "~s", Nl, Indent, [escape_bstring(Val)]);
-
-print(?UO(_L, Op, Val), Str, Nl, Indent) ->
-    Fmt = if Op == 'not' -> "~s ~s";
-             true -> "~s~s"
-          end,
-    fmt(Str, Fmt, Nl, Indent, [atom_to_list(Op), print_single(Val)]);
-
-print(Ast, Str, Nl, Indent) ->
-    fmt(Str, "(INVALID: ~p)", Nl, Indent, [Ast]).
-
-
-print([], Str, _Nl, _Indent, _Accum, _Sep) ->
-    Str;
-print([H], Str, Nl, Indent, _Accum, _Sep) ->
-    print(H, Str, Nl, Indent);
-print([H|T], Str, Nl, Indent, Accum, Sep) ->
-    NewStr = [print(H, Str, Nl, Indent), Sep],
-    print(T, NewStr, Nl, Indent, Accum, Sep).
-
-print_kvs(Items) ->
-    print(Items, "", false, 0, [], ", ").
-
-print_seq(Items) ->
-    print(Items, "", false, 0, [], ", ").
-
-print_path(Items) ->
-    print(Items, "", false, 0, [], ".").
-
-print_wclauses([{wcond, _L, Cond, Body}|Clauses], Indent) ->
-    [print_guard(Cond), ":\n", print_body(Body, Indent + 1), print(Clauses, "", true, Indent, [], "")].
-
-print_catch(nocatch, _Nl, _Indent) -> "";
-print_catch(?E(_CLine, 'case', Cases), Nl, Indent) ->
-    fmt("", "catch~n~s", false, Indent, [print_clauses(Cases, Nl, Indent + 1)]).
-
-print_after(noafter, _Indent) -> "";
-print_after({Timeout, Body}, Indent) ->
-    fmt("", "after ~s:~n~s", false, Indent, [print_single(Timeout),
-                                             print_body(Body, Indent + 1)]);
-print_after(Body, Indent) ->
-    fmt("", "after:\n~s", false, Indent, [print_body(Body, Indent + 1)]).
-
-print_clauses(Clauses, Nl, Indent) ->
-    print(Clauses, "", Nl, Indent, [], "").
-
-print_conds(Conds) ->
-    print_seq(Conds).
-
-print_body(Body, Indent) -> print(Body, "", true, Indent).
-
-print_guard(Guard) ->
-    string:join(lists:map(fun print_seq/1, Guard), "; ").
-
-print_when(nowhen) -> "";
-print_when(When) ->
-    fmt("", " when ~s", false, 0, [print_guard(When)]).
-
-print_thread_call({first, Call}, Indent) ->
-    fmt("", "-> ~s", true, Indent, [print_single(Call)]);
-print_thread_call({last, Call}, Indent) ->
-    fmt("", "->> ~s", true, Indent, [print_single(Call)]).
-
-print_thread_calls(Calls, Indent) ->
-    lists:map(fun (TCall) -> print_thread_call(TCall, Indent) end, Calls).
-
-print_qualifier({filter, Filter}, Indent) ->
-    [ind(Indent), print_single(Filter)];
-print_qualifier({generate, _Line, Left, Right}, Indent) ->
-    fmt("", "~s in ~s", false, Indent, [print_single(Left), print_single(Right)]);
-print_qualifier({bgenerate, _Line, Left, Right}, Indent) ->
-    fmt("", "~s <- ~s", false, Indent, [print_single(Left), print_single(Right)]).
-
-print_qualifiers(Qs, _Indent) ->
-    StrQs = lists:map(fun (Q) -> print_qualifier(Q, 0) end, Qs),
-    [" ", string:join(StrQs, "; ")].
-
-
-precedence('~') -> {left, 300};
-precedence('not') -> {left, 300};
-
-precedence('andd') -> {left, 400};
-precedence('&') -> {left, 400};
-precedence('*') -> {left, 400};
-precedence('/') -> {left, 400};
-precedence('//') -> {left, 400};
-precedence('%') -> {left, 400};
-
-precedence('orr') -> {left, 500};
-precedence('+') -> {left, 500};
-precedence('-') -> {left, 500};
-precedence('|') -> {left, 500};
-precedence('^') -> {left, 500};
-precedence('xor') -> {left, 500};
-precedence('>>') -> {left, 500};
-precedence('<<') -> {left, 500};
-
-precedence('++') -> {right, 600};
-precedence('--') -> {right, 600};
-
-precedence('<') -> {left, 700};
-precedence('<=') -> {left, 700};
-precedence('>') -> {left, 700};
-precedence('>=') -> {left, 700};
-precedence('==') -> {left, 700};
-precedence('is') -> {left, 700};
-precedence('!=') -> {left, 700};
-precedence('isnt') -> {left, 700};
-
-precedence('and') -> {left, 800};
-precedence('or') -> {left, 900};
-
-precedence('!') -> {right, 1000};
-precedence('=') -> {right, 1000}.
-
-should_wrap(Op, Pos, ?O(_Line, SubOp, _L, _R)) ->
-    {OpAssoc, OpPrec} = precedence(Op),
-    {SubOpAssoc, SubOpPrec} = precedence(SubOp),
-    % TODO: this for sure is wrong
-    case {Pos, OpAssoc, SubOpAssoc} of
-        _ when OpPrec < SubOpPrec -> true;
-        {left, left, _} when OpPrec == SubOpPrec -> true;
-        {right, right, _} when OpPrec == SubOpPrec -> true;
-        _ -> false
-    end;
-should_wrap(_Op, _Pos, _Sub) -> false.
-
-should_indent_right(?E(_L, call, _)) -> false;
-should_indent_right(?E(_L, call_do, _)) -> false;
-should_indent_right(?E(_L, call_thread, _)) -> false;
-should_indent_right(?E(_L, _, _)) -> true;
-should_indent_right(_) -> false.
-
-escape_string(Str) -> io_lib:write_string(Str, $").
-escape_bstring(Str) -> io_lib:write_string(Str, $').
+-define(PADDING, 2).
+-define(PAPER, 80). % 80
+-define(RIBBON, 56). % 56
+-define(NOUSER, undefined).
+-define(NOHOOK, none).
+
+-record(ctxt, {prec = 0       :: integer(),
+	       sub_indent = 2     :: non_neg_integer(),
+           exports_all = false,
+           exports = #{},
+	       break_indent = 4   :: non_neg_integer(),
+	       paper = ?PAPER     :: integer(),
+	       ribbon = ?RIBBON   :: integer()}).
+
+layout(V) -> layout(V, default_ctx()).
+
+layout(V, Ctx) when is_list(V) -> pp_mod(V, Ctx);
+layout(V, Ctx) -> pp(V, Ctx).
+
+format(V) -> prettypr:format(layout(V), ?PAPER, ?RIBBON).
+
+default_ctx() -> #ctxt{}.
+
+pp_mod([], _Ctx) -> empty();
+pp_mod([Node | Nodes], Ctx) ->
+    Ctx1 = maybe_update_ctx(Node, Ctx),
+    above(pp(Node, Ctx1), pp_mod(Nodes, Ctx1)).
+
+maybe_update_ctx({attribute, _, compile, export_all}, Ctx) ->
+    Ctx1 = Ctx#ctxt{exports_all=true},
+    Ctx1;
+maybe_update_ctx({attribute, _, export, Exports}, Ctx=#ctxt{exports=CurExports}) ->
+    NewExports = maps:merge(CurExports, maps:from_list([{K, true} || K <- Exports])),
+    Ctx1 = Ctx#ctxt{exports=NewExports},
+    Ctx1;
+maybe_update_ctx(_Node, Ctx) ->
+    Ctx.
+
+function_exported(#ctxt{exports_all=true}, _, _) -> true;
+function_exported(#ctxt{exports=Exports}, Name, Arity) ->
+    maps:is_key({Name, Arity}, Exports).
+
+arity_to_list('_') -> "`_`";
+arity_to_list(V) -> integer_to_list(V).
+
+pp_fn_ref({FNameAtom, Arity}, _Ctx) ->
+    text(atom_to_list(FNameAtom) ++ "/" ++ arity_to_list(Arity)).
+
+pp_fn_deprecated_ref({FName, Arity, When}, _Ctx) ->
+    text("(" ++ atom_to_list(FName) ++ ", " ++ arity_to_list(Arity) ++ ", "
+         ++ atom_to_list(When) ++ ")");
+pp_fn_deprecated_ref(FnRef, Ctx) ->
+    pp_fn_ref(FnRef, Ctx).
+
+pp_attr_fun_list(Prefix, Funs, Ctx) ->
+    besidel([text(Prefix),
+             join(Funs, Ctx, fun pp_fn_ref/2, comma_f()),
+             cparen_f()]).
+
+gen_attr(Attr, V) when is_atom(V) ->
+    text("@" ++ atom_to_list(Attr) ++ "(" ++ quote_atom_raw(V) ++ ")");
+gen_attr(Attr, V) when is_list(V) ->
+    text("@" ++ atom_to_list(Attr) ++ "(" ++ io_lib:write_string(V) ++ ")").
+
+% TODO: what to do with errors
+pp({error, _}, _Ctx) -> empty();
+% TODO: handle specs
+pp({attribute, _, spec, _}, _Ctx) -> empty();
+% TODO: handle opaque
+pp({attribute, _, opaque, _}, _Ctx) -> empty();
+% TODO: handle dialyzer
+pp({attribute, _, dialyzer, _}, _Ctx) -> empty();
+% TODO: handle callback
+pp({attribute, _, callback, _}, _Ctx) -> empty();
+% TODO: handle optional_callbacks
+pp({attribute, _, optional_callbacks, _}, _Ctx) -> empty();
+pp({attribute, _, file, _}, _Ctx) -> empty();
+pp({attribute, _, module, _}, _Ctx) -> empty();
+pp({attribute, _, Attr=behaviour, V}, _Ctx) ->
+    gen_attr(Attr, V);
+pp({attribute, _, behavior, V}, _Ctx) ->
+    gen_attr(behaviour, V);
+pp({attribute, _, Attr=author, V}, _Ctx) ->
+    gen_attr(Attr, V);
+pp({attribute, _, Attr=vsn, V}, _Ctx) ->
+    gen_attr(Attr, V);
+pp({attribute, _, Attr=date, V}, _Ctx) ->
+    gen_attr(Attr, V);
+pp({attribute, _, Attr=vc, V}, _Ctx) ->
+    gen_attr(Attr, V);
+pp({attribute, _, import, {ModNameAtom, Imports}}, Ctx) ->
+    beside(text("@import("),
+           followc(Ctx, beside(text(atom_to_list(ModNameAtom)), comma_f()),
+                   beside(wrap_list(join(Imports, Ctx, fun pp_fn_ref/2, comma_f())), cparen_f())));
+pp({attribute, _, export_type, Exports}, Ctx) ->
+    pp_attr_fun_list("@export_type(", Exports, Ctx);
+pp({attribute, _, on_load, V={_FName, _Arity}}, Ctx) ->
+    besidel([text("@on_load("), pp_fn_ref(V, Ctx), cparen_f()]);
+pp({attribute, _, deprecated, V={_FName, _Arity, _When}}, Ctx) ->
+    besidel([text("@deprecated("), pp_fn_deprecated_ref(V, Ctx), cparen_f()]);
+pp({attribute, _, deprecated, module}, _Ctx) ->
+    text("@deprecated(module)");
+pp({attribute, _, deprecated, Funs}, Ctx) ->
+    besidel([text("@deprecated("),
+             join(Funs, Ctx, fun pp_fn_deprecated_ref/2, comma_f()),
+             cparen_f()]);
+pp({attribute, _, inline, Exports}, Ctx) ->
+    pp_attr_fun_list("@inline(", Exports, Ctx);
+pp({attribute, _, type, {PName, Type, _Vars}}, Ctx) ->
+    followc(Ctx, text("@type(" ++ atom_to_list(PName) ++ ") ->"),
+            pp_type(Type, Ctx));
+pp({attribute, _, export, _}, _Ctx) -> empty();
+pp({attribute, _, compile, export_all}, _Ctx) -> text("@compile(export_all)");
+pp({attribute, _, compile, _}, _Ctx) -> empty();
+
+pp({attribute, _, record, {Name, Fields}}, Ctx) ->
+    followc(Ctx, wrap(text(atom_to_list(Name)), text("@record("), text(") ->")),
+            wrap_paren(join(Fields, Ctx, fun pp_rec_def/2, comma_f())));
+
+pp({var, _, V}, _Ctx) -> text(atom_to_list(V));
+pp({integer, _, Num}, _Ctx) -> text(integer_to_list(Num));
+pp({float, _, Num}, _Ctx) -> text(io_lib:write(Num));
+pp({char, _, V}, _Ctx) -> text("#c " ++ io_lib:write_string([V]));
+pp({atom, _, V}, _Ctx) -> quote_atom(V);
+pp({string, _, V}, _Ctx) -> text(io_lib:write_string(V));
+pp({bin, _, [{bin_element, _, {string, _, V}, default, default}]}, _Ctx) ->
+    text(io_lib:write_string(V, $'));
+%pp({bin, _, []}, _Ctx) -> text("#b {}");
+pp({bin, _, Elems}, Ctx) -> beside(text("#b "), wrap_map(pp_bin_es(Elems, Ctx)));
+
+pp({tuple, _, []}, _Ctx) -> text("()");
+pp({tuple, _, [Item]}, Ctx) ->
+    wrap_paren(beside(pp(Item, Ctx), comma_f()));
+pp({tuple, _, Items}, Ctx) ->
+    wrap_paren(pp_items(Items, Ctx));
+
+pp({map, _, []}, _Ctx) -> text("{}");
+pp({map, _, Items}, Ctx) ->
+    pp_map(Items, Ctx);
+pp({map, _, CurMap, Items}, Ctx) ->
+    wrap(text(" # "), pp(CurMap, Ctx), pp_map(Items, Ctx));
+
+pp({record, _, RName, Args}, Ctx) ->
+    beside(text("#r." ++ atom_to_list(RName) ++ " "),
+        wrap_map(join(Args, Ctx, fun pp_rec_pair/2, comma_f())));
+
+pp({record, _, CurRec, RName, Args}, Ctx) ->
+    beside(text("#r." ++ atom_to_list(RName) ++ " "),
+        wrap(text(" # "), pp(CurRec, Ctx), wrap_map(join(Args, Ctx, fun pp_rec_pair/2, comma_f()))));
+
+pp({record_field, _, RVal, RName, Field}, Ctx) ->
+    sep([beside(text("#r." ++ atom_to_list(RName) ++ "."), pp(Field, Ctx)),
+         pp(RVal, Ctx)]);
+
+pp({record_index, _, RName, Field}, Ctx) ->
+    beside(text("#r." ++ atom_to_list(RName) ++ " "), pp(Field, Ctx));
+
+pp({'catch', _, Expr}, Ctx) ->
+    beside(text("catch "), pp(Expr, Ctx));
+
+% fun references
+pp({'fun', Line, {function, FName, Arity}}, Ctx) ->
+    beside(text("fn "), wrap(colon_f(), pp({atom, Line, FName}, Ctx), pp({integer, Line, Arity}, Ctx)));
+pp({'fun', _, {function, MName, FName, Arity}}, Ctx) ->
+    beside(text("fn "), wrap(colon_f(), wrap(dot_f(), pp(MName, Ctx), pp(FName, Ctx)), pp(Arity, Ctx)));
+
+pp({nil, _}, _Ctx) -> text("[]");
+pp(V={cons, _, _H, _T}, Ctx) -> pp_cons(V, Ctx);
+
+pp({call, _, {remote, _, MName, FName}, Args}, Ctx) ->
+    pp_call(MName, FName, Args, Ctx);
+
+pp({call, _, FName, Args}, Ctx) ->
+    pp_call(FName, Args, Ctx);
+
+pp({match, Line, Left, Right}, Ctx) ->
+    % reuse logic
+    pp({op, Line, '=', Left, Right}, Ctx);
+pp({op, _, Op, Left, Right}, Ctx) ->
+    {LeftPrec, Prec, RightPrec} = inop_prec(Op),
+    D1 = pp(Left, Ctx#ctxt{prec=LeftPrec}),
+    D2 = text(atom_to_list(fn_to_erl:map_op_reverse(Op))),
+    D3 = pp(Right, Ctx#ctxt{prec=RightPrec}),
+    D4 = parc(Ctx, [D1, D2, D3]),
+    maybe_paren(Prec, Ctx#ctxt.prec, D4);
+
+% unary
+pp({op, _, Op, Right}, Ctx) ->
+    {Prec, RightPrec} = preop_prec(Op),
+    LOp = text(atom_to_list(fn_to_erl:map_op_reverse(Op))),
+    LRight = pp(Right, Ctx#ctxt{prec=RightPrec}),
+    L = parc(Ctx, [LOp, LRight]),
+    maybe_paren(Prec, Ctx#ctxt.prec, L);
+
+pp({lc, _, {block, _, Body}, Gens}, Ctx) ->
+    Ctx1 = reset_prec(Ctx),
+    pp_for(Gens, Ctx1, pp_body(Body, Ctx1), "for");
+pp({lc, _, Body, Gens}, Ctx) ->
+    Ctx1 = reset_prec(Ctx),
+    pp_for(Gens, Ctx1, pp(Body, Ctx1), "for");
+
+pp({bc, _, {block, _, Body}, Gens}, Ctx) ->
+    Ctx1 = reset_prec(Ctx),
+    pp_for(Gens, Ctx1, pp_body(Body, Ctx1), "#b for");
+pp({bc, _, Body, Gens}, Ctx) ->
+    Ctx1 = reset_prec(Ctx),
+    pp_for(Gens, Ctx1, pp(Body, Ctx1), "#b for");
+
+pp({block, _, [Expr]}, Ctx) ->
+    Ctx1 = reset_prec(Ctx),
+    sep([
+         text("begin"),
+         nestc(Ctx1, pp(Expr, Ctx1)),
+         text("end")
+        ]);
+pp({block, _, Body}, Ctx) ->
+    Ctx1 = reset_prec(Ctx),
+    above(text("begin"),
+          above(nestc(Ctx1, pp_body(Body, Ctx1)),
+                text("end")));
+
+pp({'try', _, Body, [], Clauses, AfterBody}, Ctx0) ->
+    Ctx = reset_prec(Ctx0),
+    above(text("try"),
+          above(
+            maybe_above(
+              maybe_above(
+                nestc(Ctx, pp_body(Body, Ctx)),
+                pp_try_catch_clauses(Clauses, Ctx)),
+              pp_try_after(AfterBody, Ctx)),
+            text("end")));
+
+pp({'try', _, Expr, OfCases, Clauses, AfterBody}, Ctx0) ->
+    Ctx = reset_prec(Ctx0),
+    abovel([besidel([text("try "), pp_body(Expr, Ctx)]),
+            maybe_above(
+              maybe_above(nestc(Ctx, pp_case_clauses(OfCases, Ctx)),
+                          pp_try_catch_clauses(Clauses, Ctx)),
+              pp_try_after(AfterBody, Ctx)),
+            text("end")]);
+
+% receive no after
+pp({'receive', _, Clauses}, Ctx0) ->
+    Ctx = reset_prec(Ctx0),
+    abovel([text("receive"),
+            pp_case_clauses(Clauses, Ctx),
+            text("end")]);
+
+pp({'receive', _, [], AfterExpr, AfterBody}, Ctx0) ->
+    Ctx = reset_prec(Ctx0),
+    abovel([besidel([text("receive"), text(" after "), pp(AfterExpr, Ctx), colon_f()]),
+            nestc(Ctx, pp_body(AfterBody, Ctx)),
+            text("end")]);
+pp({'receive', _, Clauses, AfterExpr, AfterBody}, Ctx0) ->
+    Ctx = reset_prec(Ctx0),
+    abovel([text("receive"),
+            pp_case_clauses(Clauses, Ctx),
+            besidel([text("after "), pp(AfterExpr, Ctx), colon_f()]),
+            nestc(Ctx, pp_body(AfterBody, Ctx)),
+            text("end")]);
+
+pp({'if', _, Clauses}, Ctx) ->
+    pp_if_clauses(Clauses, Ctx, first);
+
+pp({'case', _, Expr, Clauses}, Ctx) ->
+    above(parc(Ctx, [text("match"), beside(pp(Expr, Ctx), colon_f())]),
+          above(pp_case_clauses(Clauses, Ctx),
+                text("end")));
+
+% special case one clause, put it in the same line
+pp({'fun', _, {clauses, [Clause]}}, Ctx) ->
+    above(pp_case_clause(Clause, Ctx, "fn case"),
+          text("end"));
+pp({'fun', _, {clauses, Clauses}}, Ctx) ->
+    above(sep([text("fn"), pp_case_clauses(Clauses, Ctx)]),
+          text("end"));
+
+pp({named_fun, _, AName, Clauses}, Ctx) ->
+    above(sep([text("fn " ++ atom_to_list(AName)), pp_case_clauses(Clauses, Ctx)]),
+          text("end"));
+pp({function, _, Name, Arity, Clauses}, Ctx) ->
+    IsExported = function_exported(Ctx, Name, Arity),
+    Attrs = if IsExported -> text("@public"); true -> empty() end,
+    % HACK: force a new line above each top level function
+    above(sep([text("\nfn"), quote_atom(Name), Attrs]),
+          above(pp_case_clauses(Clauses, Ctx),
+                text("end")));
+
+pp({eof, _}, _Ctx) -> empty().
+
+pp_bin_es(Es, Ctx) -> join(Es, Ctx, fun pp_bin_e/2, comma_f()).
+
+pp_bin_e({bin_element, _, Left, default, [binary]}, Ctx) ->
+    wrap_pair(Ctx, colon_f(), pp(Left, Ctx), text("binary"));
+pp_bin_e({bin_element, _, Left, Size, default}, Ctx) when Size =/= default ->
+    wrap_pair(Ctx, colon_f(), pp(Left, Ctx), pp(Size, Ctx));
+pp_bin_e({bin_element, _, Left, default, default}, Ctx) ->
+    wrap_pair(Ctx, colon_f(), pp(Left, Ctx), text("_"));
+pp_bin_e({bin_element, _, Left, Size, Types}, Ctx) ->
+    TypeMap = pp_bin_e_types(Types, Size, Ctx),
+    wrap_pair(Ctx, colon_f(), pp(Left, Ctx), TypeMap).
+
+pp_bin_e_types(Types, Size, Ctx) ->
+    pp_bin_e_types([{size, Size} | Types], Ctx).
+
+pp_bin_e_types(Types, Ctx) ->
+    wrap_map(join(Types, Ctx, fun pp_bin_e_type/2, comma_f())).
+
+pp_attr_pair(Ctx, KeyTxt, ValTxt) ->
+    wrap_pair(Ctx, colon_f(), text(KeyTxt), text(ValTxt)).
+
+pp_bin_e_type({size, default}, _Ctx) -> empty();
+pp_bin_e_type({size, V}, Ctx) ->
+    wrap_pair(Ctx, colon_f(), text("size"), pp(V, Ctx));
+
+pp_bin_e_type({unit, V}, Ctx) ->
+    pp_attr_pair(Ctx, "unit", integer_to_list(V));
+
+pp_bin_e_type(Type=integer, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=float, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=binary, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=bytes, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=bitstring, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=bits, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=utf8, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=utf16, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+pp_bin_e_type(Type=utf32, Ctx) ->
+    pp_attr_pair(Ctx, "type", atom_to_list(Type));
+
+pp_bin_e_type(Type=signed, Ctx) ->
+    pp_attr_pair(Ctx, "sign", atom_to_list(Type));
+pp_bin_e_type(Type=unsigned, Ctx) ->
+    pp_attr_pair(Ctx, "sign", atom_to_list(Type));
+
+pp_bin_e_type(Type=big, Ctx) ->
+    pp_attr_pair(Ctx, "endianness", atom_to_list(Type));
+pp_bin_e_type(Type=little, Ctx) ->
+    pp_attr_pair(Ctx, "endianness", atom_to_list(Type));
+pp_bin_e_type(Type=native, Ctx) ->
+    pp_attr_pair(Ctx, "endianness", atom_to_list(Type)).
+
+
+pp_call(FName, Args, Ctx) ->
+    pp_call_f(FName, Args, Ctx, fun pp/2).
+
+pp_call(MName, FName, Args, Ctx) ->
+    pp_call_f(MName, FName, Args, Ctx, fun pp/2).
+
+pp_call_f(FName, Args, Ctx, PPFun) ->
+    beside(pp_call_pos(FName, Ctx), pp_args(Args, Ctx, PPFun)).
+
+pp_call_f(MName, FName, Args, Ctx, PPFun) ->
+    beside(wrap(dot_f(), pp_call_pos(MName, Ctx),  pp_call_pos(FName, Ctx)), pp_args(Args, Ctx, PPFun)).
+
+pp_map(Items, Ctx) ->
+    wrap_map(join(Items, Ctx, fun pp_pair/2, comma_f())).
+
+pp_type_map(Items, Ctx) ->
+    wrap_map(join(Items, Ctx, fun pp_pair_type/2, comma_f())).
+
+pp_lc_gens(Items, Ctx) ->
+    join(Items, Ctx, fun pp_lc_gen/2, scolon_f()).
+
+pp_lc_gen({generate, _, Left, Right}, Ctx) ->
+    wrap(text(" in "), pp(Left, Ctx), pp(Right, Ctx));
+% if there's a b_generate the for loop should be tagged with #b so it should be
+% handled as a b_generate anyway?
+pp_lc_gen({b_generate, _, Left, Right}, Ctx) ->
+    wrap(text(" in "), pp(Left, Ctx), pp(Right, Ctx));
+pp_lc_gen(Filter, Ctx) ->
+    beside(text("when "), pp(Filter, Ctx)).
+
+pp_for(Gens, Ctx, BodyL, Kw) ->
+    above(sep([text(Kw), beside(pp_lc_gens(Gens, Ctx), colon_f())]),
+          above(nestc(Ctx, BodyL),
+                text("end"))).
+
+wrap_list(Items) ->
+    wrap(Items, olist_f(), clist_f()).
+
+wrap_map(Items) ->
+    wrap(Items, omap_f(), cmap_f()).
+
+wrap_paren(Items) ->
+    wrap(Items, oparen_f(), cparen_f()).
+
+wrap(Items, Open, Close) ->
+    beside(Open, beside(Items, Close)).
+
+abovel([]) -> empty();
+abovel([H]) -> H;
+% maybe skip empty() here?
+abovel([H | T]) -> above(H, abovel(T)).
+
+besidel([]) -> empty();
+besidel([H]) -> H;
+besidel([H | T]) -> beside(H, besidel(T)).
+
+% null is empty()
+maybe_above(L, null) -> L;
+maybe_above(null, L) -> L;
+maybe_above(LLeft, LRight) -> above(LLeft, LRight).
+
+nestc(Ctx, Layout) ->
+    nest(Ctx#ctxt.sub_indent, Layout).
+
+followc(Ctx, L1, L2) ->
+    follow(L1, L2, Ctx#ctxt.sub_indent * 2).
+
+parc(Ctx, L) ->
+    par(L, Ctx#ctxt.sub_indent).
+
+pp_try_catch_clauses([], _Ctx) -> empty();
+pp_try_catch_clauses(Clauses, Ctx) ->
+    above(text("catch"),
+          nestc(Ctx, pp_try_catch_cases(Clauses, Ctx))).
+
+pp_try_after([], _Ctx) -> empty();
+pp_try_after(Body, Ctx) ->
+    above(text("after"), nestc(Ctx, pp_body(Body, Ctx))).
+
+
+pp_try_catch_cases([], _Ctx) -> empty();
+pp_try_catch_cases([H | T], Ctx) ->
+    above(pp_try_catch_case(H, Ctx), pp_try_catch_cases(T, Ctx)).
+
+pp_try_catch_case({clause, _, [{tuple, _, TItems}], [], Body}, Ctx) ->
+    pp_header_and_body(Ctx,
+                       beside(text("case "), beside(pp_try_catch_case_items(TItems, Ctx), colon_f())),
+                       Body);
+pp_try_catch_case({clause, _, [{tuple, _, TItems}], Guards, Body}, Ctx) ->
+    pp_header_and_body(Ctx,
+                       followc(Ctx,
+                               beside(text("case "), pp_try_catch_case_items(TItems, Ctx)),
+                               beside(text("when "), beside(pp_guards(Guards, Ctx), colon_f()))),
+                       Body).
+
+pp_try_catch_case_items([{atom, _, throw}, Var, {var, _, '_'}], Ctx) ->
+    pp(Var, Ctx);
+pp_try_catch_case_items([Type, Var, {var, _, '_'}], Ctx) ->
+    pp_items([Type, Var], Ctx);
+pp_try_catch_case_items([Type, Var, StackTrace], Ctx) ->
+    pp_items([Type, Var, StackTrace], Ctx).
+
+pp_call_pos(V={var, _, _}, Ctx) -> pp(V, Ctx);
+pp_call_pos(V={atom, _, _}, Ctx) -> pp(V, Ctx);
+pp_call_pos(V, Ctx) -> beside(oparen_f(), beside(pp(V, Ctx), cparen_f())).
+
+pp_args([], _Ctx, _PPFun) -> text("()");
+pp_args(Args, Ctx, PPFun) ->
+    beside(oparen_f(), beside(pp_args_inn(Args, Ctx, PPFun), cparen_f())).
+
+pp_args_inn(Args, Ctx) -> pp_args_inn(Args, Ctx, fun pp/2).
+
+pp_args_inn([], _Ctx, _PPFun)   -> empty();
+pp_args_inn([Arg], Ctx, PPFun) -> PPFun(Arg, Ctx);
+pp_args_inn(Args, Ctx, PPFun)  -> join(Args, Ctx, PPFun, comma_f()).
+
+pp_case_clauses([Clause], Ctx) ->
+    pp_case_clause(Clause, Ctx);
+pp_case_clauses([Clause | Clauses], Ctx) ->
+    above(pp_case_clause(Clause, Ctx), pp_case_clauses(Clauses, Ctx)).
+
+pp_case_clause(Clause, Ctx) ->
+    pp_case_clause(Clause, Ctx, "case").
+
+pp_case_clause({clause, _, [], [], Body}, Ctx, Kw) ->
+    pp_header_and_body(Ctx, text(Kw ++ ":"), Body);
+pp_case_clause({clause, _, Patterns, [], Body}, Ctx, Kw) ->
+    pp_header_and_body(Ctx,
+                       beside(text(Kw ++ " "), beside(pp_args_inn(Patterns, Ctx), colon_f())),
+                       Body);
+pp_case_clause({clause, _, Patterns, Guards, Body}, Ctx, Kw) ->
+    pp_header_and_body(Ctx,
+                       followc(Ctx,
+                               beside(text(Kw ++ " "), pp_args_inn(Patterns, Ctx)),
+                               beside(text("when "), beside(pp_guards(Guards, Ctx), colon_f()))),
+                       Body).
+
+pp_if_clauses([Clause], Ctx, GuardPos) ->
+    NewGuardPos = if GuardPos == first -> first; true -> last end,
+    above(pp_if_clause(Clause, Ctx, NewGuardPos),
+          text("end"));
+pp_if_clauses([Clause | Clauses=[_|_]], Ctx, GuardPos) ->
+    above(pp_if_clause(Clause, Ctx, GuardPos),
+          pp_if_clauses(Clauses, Ctx, middle)).
+
+pp_if_clause({clause, _, _, [[{atom, _, true}]], Body}, Ctx, last) ->
+    pp_header_and_body(Ctx, text("else:"), Body);
+pp_if_clause({clause, _, _, Guards, Body}, Ctx, first) ->
+    pp_header_and_body(Ctx,
+                       pp_if_header(Ctx, "when ", Guards),
+                       Body);
+pp_if_clause({clause, _, _, Guards, Body}, Ctx, _) ->
+    pp_header_and_body(Ctx,
+                       pp_if_header(Ctx, "else ", Guards),
+                       Body).
+
+pp_if_header(Ctx, KwT, Guards) ->
+    beside(text(KwT), beside(pp_guards(Guards, Ctx), colon_f())).
+
+pp_header_and_body(Ctx, HeaderLayout, Body) ->
+    sep([HeaderLayout, nestc(Ctx, pp_body(Body, Ctx))]).
+
+pp_guards(Guards, Ctx) ->
+    join(Guards, Ctx, fun pp_guard/2, scolon_f()).
+
+pp_guard(SGuards, Ctx) ->
+    join(SGuards, Ctx, fun pp/2, comma_f()).
+
+join(Items, Ctx, PPFun, Sep) ->
+    join(Items, Ctx, PPFun, Sep, []).
+
+join([], _Ctx, _PPFun, _Sep, []) ->
+    empty();
+join([Item], Ctx, PPFun, _Sep, []) ->
+    PPFun(Item, Ctx);
+join([Item], Ctx, PPFun, _Sep, Accum) ->
+    parc(Ctx, lists:reverse([PPFun(Item, Ctx) | Accum]));
+join([H | T=[_|_]], Ctx, PPFun, Sep, Accum) ->
+    join(T, Ctx, PPFun, Sep, [beside(PPFun(H, Ctx), Sep) | Accum]);
+join([H | T], Ctx, PPFun, Sep, Accum) ->
+    join([T], Ctx, PPFun, Sep, [beside(PPFun(H, Ctx), Sep) | Accum]).
+
+pp_items(Items, Ctx) ->
+    join(Items, Ctx, fun pp/2, comma_f()).
+
+pp_pair({map_field_assoc, _, K, V}, Ctx) ->
+    wrap_pair(Ctx, colon_f(), pp(K, Ctx), pp(V, Ctx));
+pp_pair({map_field_exact, _, K, V}, Ctx) ->
+    wrap_pair(Ctx, equal_f(), pp(K, Ctx), pp(V, Ctx)).
+
+pp_pair_type({type, _, map_field_assoc, [K, V]}, Ctx) ->
+    wrap_pair(Ctx, colon_f(), pp_type(K, Ctx), pp_type(V, Ctx));
+pp_pair_type({type, _, map_field_exact, [K, V]}, Ctx) ->
+    wrap_pair(Ctx, equal_f(), pp_type(K, Ctx), pp_type(V, Ctx)).
+
+wrap_pair(Ctx, Sep, Left, Right) ->
+    parc(Ctx, [beside(Left, Sep), Right]).
+
+pp_rec_pair({record_field, _, K, V}, Ctx) ->
+    parc(Ctx, [beside(pp(K, Ctx), colon_f()), pp(V, Ctx)]).
+
+pp_rec_def({record_field, _, Name}, Ctx) -> pp(Name, Ctx);
+pp_rec_def({record_field, _, Name, Val}, Ctx) -> wrap(equal_f(), pp(Name, Ctx), pp(Val, Ctx));
+pp_rec_def({typed_record_field, {record_field, _, Name}, Type}, Ctx) ->
+    followc(Ctx, beside(pp(Name, Ctx), text(" is")), pp_type(Type, Ctx));
+pp_rec_def({typed_record_field, {record_field, _, Name, Val}, Type}, Ctx) ->
+    followc(Ctx, beside(wrap(equal_f(), pp(Name, Ctx), pp(Val, Ctx)), text(" is")), pp_type(Type, Ctx)).
+
+pp_type({ann_type, _, [Type, AnnType]}, Ctx) ->
+    wrap(text(" is "), pp_type(Type, Ctx), pp_type(AnnType, Ctx));
+pp_type(V={op, _, _, _}, Ctx) -> pp(V, Ctx);
+pp_type(V={op, _, _, _, _}, Ctx) -> pp(V, Ctx);
+pp_type(V={atom, _, _}, Ctx) -> pp(V, Ctx);
+pp_type(V={var, _, _}, Ctx) -> pp(V, Ctx);
+pp_type(V={integer, _, _}, Ctx) -> pp(V, Ctx);
+pp_type({user_type, Line, Name, Args}, Ctx) ->
+    pp_call_f({atom, Line, Name}, Args, Ctx, fun pp_type/2);
+
+pp_type({type, _, tuple, any}, _Ctx) ->
+    text("tuple()");
+pp_type({type, _, map, any}, _Ctx) ->
+    text("map()");
+pp_type({type, _, list, []}, _Ctx) ->
+    text("list()");
+
+pp_type({type, _, tuple, [Item]}, Ctx) ->
+    wrap_paren(beside(pp_type(Item, Ctx), comma_f()));
+pp_type({type, _, tuple, Items}, Ctx) ->
+    wrap_paren(join(Items, Ctx, fun pp_type/2, comma_f()));
+pp_type({type, _, list, Args}, Ctx) ->
+    wrap_list(join(Args, Ctx, fun pp_type/2, comma_f()));
+pp_type({type, _, map, Args}, Ctx) ->
+    pp_type_map(Args, Ctx);
+    %wrap_map(join(Args, Ctx, fun pp_type_map/2, comma_f()));
+pp_type({type, _, union, Args}, Ctx) ->
+    wrap_list(join(Args, Ctx, fun pp_type/2, text(" or")));
+pp_type({remote_type, _, [AMod, AFName, Args]}, Ctx) ->
+    pp_call_f(AMod, AFName, Args, Ctx, fun pp_type/2);
+pp_type({type, Line, Name, Args}, Ctx) ->
+    pp_call_f({atom, Line, Name}, Args, Ctx, fun pp_type/2).
+
+pp_cons(V, Ctx) ->
+    case cons_to_list(V, []) of
+        [A | B] when not is_list(A), not is_list(B) ->
+            followc(Ctx, beside(pp(A, Ctx), text(" ::")), pp(B, Ctx));
+        [A | B] when not is_list(B) ->
+            followc(Ctx, beside(wrap_list(pp_items(A, Ctx)), text(" ::")), pp(B, Ctx));
+        L -> wrap_list(pp_items(L, Ctx))
+    end.
+
+cons_to_list({cons, _, H, {nil, _}}, Accum) ->
+    % proper list tail
+    lists:reverse([H | Accum]);
+cons_to_list({cons, _, H, T={cons, _, _, _}}, Accum) ->
+    cons_to_list(T, [H | Accum]);
+cons_to_list({cons, _, H, T}, []) ->
+    [H | T];
+cons_to_list({cons, _, H, T}, Accum) ->
+    % improper list
+    [lists:reverse([H | Accum]) | T].
+
+% not sure if the best way
+pp_body([], _Ctx) ->
+    empty();
+pp_body([H | T], Ctx) ->
+    above(pp(H, Ctx), pp_body(T, Ctx)).
+
+olist_f() -> floating(text("[")).
+clist_f() -> floating(text("]")).
+oparen_f() -> floating(text("(")).
+cparen_f() -> floating(text(")")).
+omap_f() -> floating(text("{")).
+cmap_f() -> floating(text("}")).
+
+equal_f() -> floating(text("=")).
+
+comma_f() -> floating(text(",")).
+dot_f() -> floating(text(".")).
+colon_f() -> floating(text(":")).
+scolon_f() -> floating(text(";")).
+
+maybe_paren(P, Prec, Expr) when P < Prec ->
+    beside(beside(oparen_f(), Expr), cparen_f());
+maybe_paren(_P, _Prec, Expr) ->
+    Expr.
+
+set_prec(Ctxt, Prec) ->
+    Ctxt#ctxt{prec = Prec}.    % used internally
+
+reset_prec(Ctxt) ->
+    set_prec(Ctxt, 0).    % used internally
+
+quote_atom(V) ->
+    text(quote_atom_raw(V)).
+
+quote_atom_raw(V) ->
+    Chars = atom_to_list(V),
+    % will quote all erlang reserved words, I think it's ok
+    case io_lib:quote_atom(V, Chars) of
+        true -> io_lib:write_string(Chars, $`);
+        false ->
+            case fn_lexer:is_reserved(Chars) of
+                true -> io_lib:write_string(Chars, $`);
+                false -> Chars
+            end
+    end.
