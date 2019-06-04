@@ -549,7 +549,7 @@ join([], _Ctx, _PPFun, _Sep, []) ->
 join([Item], Ctx, PPFun, _Sep, []) ->
     PPFun(Item, Ctx);
 join([Item], Ctx, PPFun, _Sep, Accum) ->
-    parc(Ctx, lists:reverse([PPFun(Item, Ctx) | Accum]));
+    par(lists:reverse([PPFun(Item, Ctx) | Accum]), 2);
 join([H | T=[_|_]], Ctx, PPFun, Sep, Accum) ->
     join(T, Ctx, PPFun, Sep, [beside(PPFun(H, Ctx), Sep) | Accum]);
 join([H | T], Ctx, PPFun, Sep, Accum) ->

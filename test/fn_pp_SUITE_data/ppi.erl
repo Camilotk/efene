@@ -4,7 +4,10 @@
 -inline([v_int/0]).
 -import(lists, [map/2, foldl/3]).
 
--export_type([property/0, proplist/0]).
+% top level comment
+
+-export_type([property/0, proplist/0]). % comment after
+% comment below
 
 -type property()  :: atom() | tuple().
 -type proplist()  :: [property()].

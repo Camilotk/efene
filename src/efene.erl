@@ -15,7 +15,7 @@
 -module(efene).
 -export([main/0, main/1, compile/2, compile/3, to_code/1, to_code/2,
          to_raw_lex/1, to_lex/1, to_ast/1,
-         to_erl/1, to_erl_ast/1, to_erl_ast/2,
+         to_erl/1, erl_to_erl_syntax/1, to_erl_ast/1, to_erl_ast/2,
          to_mod/1,
          pprint/1, print_errors/2]).
 
@@ -78,6 +78,12 @@ to_erl(Path) ->
         {ok, [_|Mod]} -> erl_prettypr:format(erl_syntax:form_list(Mod));
         Other -> Other
     end.
+
+erl_to_erl_syntax(Path) ->
+    {ok, Forms} = epp_dodger:parse_file(Path, [no_fail]),
+    Comments = erl_comment_scan:file(Path),
+    Forms1 = erl_recomment:recomment_forms(Forms, Comments),
+    {ok, Forms1}.
 
 to_code(Path) ->
     to_code(Path, []).
@@ -204,6 +210,8 @@ main(["erlast", File]) ->
     print(to_erl_ast(File));
 main(["erl", File]) ->
     print(to_erl(File));
+main(["erl2syntax", File]) ->
+    print(erl_to_erl_syntax(File));
 main(["erl2ast", File]) ->
     print(from_erl(File));
 main(["erl2erl", File]) ->

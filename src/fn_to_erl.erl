@@ -14,7 +14,7 @@
 
 -module(fn_to_erl).
 -export([ast_to_ast/2, to_erl/3, to_erl/4, add_error/4, new_state/2, expected_got/2,
-        lc_to_ast/4, state_map/3, kv_to_ast/3]).
+    lc_to_ast/4, state_map/3, kv_to_ast/3]).
 
 % used by pretty printer
 -export([map_op_reverse/1]).
@@ -22,365 +22,365 @@
 -include("efene.hrl").
 
 new_state(Module, Path) ->
-    #{module => Module,
-      path => Path,
-      module_dir => filename:dirname(Path),
-      errors => [],
-      warnings => [],
-      attrs => [],
-      extensions => fn_exts:get_extensions(),
-      macros => dict:new(),
-      fns => [],
-      fns_by_name => #{},
-      level => 0}.
+#{module => Module,
+  path => Path,
+  module_dir => filename:dirname(Path),
+  errors => [],
+  warnings => [],
+  attrs => [],
+  extensions => fn_exts:get_extensions(),
+  macros => dict:new(),
+  fns => [],
+  fns_by_name => #{},
+  level => 0}.
 
 to_erl(Ast, Module, Path) ->
-    to_erl(Ast, Module, Path, #{}).
+to_erl(Ast, Module, Path, #{}).
 
 to_erl(Ast, Module, Path, Opts) ->
-    {EAst, State} = ast_to_ast(Ast, new_state(Module, Path)),
-    case maps:get(replace_fn_holders, Opts, true) of
-        true ->
-            EAst1 = replace_fn_holders(EAst, State, [], #{}),
-            {EAst1, State};
-        false ->
-            {EAst, State}
-    end.
+{EAst, State} = ast_to_ast(Ast, new_state(Module, Path)),
+case maps:get(replace_fn_holders, Opts, true) of
+    true ->
+        EAst1 = replace_fn_holders(EAst, State, [], #{}),
+        {EAst1, State};
+    false ->
+        {EAst, State}
+end.
 
 replace_fn_holders([], _State, Accum, _EmittedFns) ->
-    lists:reverse(Accum);
+lists:reverse(Accum);
 replace_fn_holders([{fn, Name, Arity}|T], State=#{fns_by_name:=FnsByName},
-                   Accum, EmittedFns) ->
-    case maps:get({Name, Arity}, EmittedFns, undefined) of
-        undefined ->
-            FnKey = {Name, Arity},
-            FnInfo = maps:get(FnKey, FnsByName),
-            #{ast := Ast} = FnInfo,
-            replace_fn_holders(T, State, [Ast|Accum], EmittedFns#{FnKey => FnInfo});
-        _ ->
-            replace_fn_holders(T, State, Accum, EmittedFns)
-    end;
+               Accum, EmittedFns) ->
+case maps:get({Name, Arity}, EmittedFns, undefined) of
+    undefined ->
+        FnKey = {Name, Arity},
+        FnInfo = maps:get(FnKey, FnsByName),
+        #{ast := Ast} = FnInfo,
+        replace_fn_holders(T, State, [Ast|Accum], EmittedFns#{FnKey => FnInfo});
+    _ ->
+        replace_fn_holders(T, State, Accum, EmittedFns)
+end;
 replace_fn_holders([H|T], State, Accum, EmittedFns) ->
-    replace_fn_holders(T, State, [H|Accum], EmittedFns).
+replace_fn_holders(T, State, [H|Accum], EmittedFns).
 
 ast_to_ast(Nodes, State) when is_list(Nodes) -> ast_to_ast(Nodes, [], State);
 
 %-export([...]).
 ast_to_ast({attr, Line, [?Atom(export=Name)], Params, noresult}, #{level := 0}=State) ->
-    export_like_to_ast(Name, Line, Params, State);
+export_like_to_ast(Name, Line, Params, State);
 %-export_type([...]).
 ast_to_ast({attr, Line, [?Atom(export_type=Name)], Params, noresult}, #{level := 0}=State) ->
-    export_like_to_ast(Name, Line, Params, State);
+export_like_to_ast(Name, Line, Params, State);
 %-on_load(fname/<arity>).
 ast_to_ast({attr, Line, [?Atom(on_load=Name)], [?O(_Line, '/', ?Atom(FunName), ?V(_ArLine, integer, Arity))], noresult}, #{level := 0}=State) ->
-    R = {attribute, Line, Name, {FunName, Arity}},
-    {R, State};
+R = {attribute, Line, Name, {FunName, Arity}},
+{R, State};
 %-import(module_name, [...]).
 ast_to_ast({attr, Line, [?Atom(import=Name)],
-            [?Atom(ModuleName), ?S(_FaLine, list, FunNamesAndArities)], noresult},
-           #{level := 0}=State) ->
-    {EFuns, State1} = state_map(fun ast_to_export_fun/2, FunNamesAndArities, State),
-    R = {attribute, Line, Name, {ModuleName, EFuns}},
-    {R, State1};
+        [?Atom(ModuleName), ?S(_FaLine, list, FunNamesAndArities)], noresult},
+       #{level := 0}=State) ->
+{EFuns, State1} = state_map(fun ast_to_export_fun/2, FunNamesAndArities, State),
+R = {attribute, Line, Name, {ModuleName, EFuns}},
+{R, State1};
 %-vsn(<literal_term>).
 ast_to_ast({attr, Line, [?Atom(vsn=Name)], [Vsn], noresult}, #{level := 0}=State) ->
-    {EVsn, State1} = ast_to_ast(Vsn, State#{level := 1}),
-    R = {attribute, Line, Name, erl_syntax:concrete(EVsn)},
-    {R, State1#{level := 0}};
+{EVsn, State1} = ast_to_ast(Vsn, State#{level := 1}),
+R = {attribute, Line, Name, erl_syntax:concrete(EVsn)},
+{R, State1#{level := 0}};
 %-include(Path).
 ast_to_ast({attr, Line, [?Atom(include_lib)], [?V(_, string, Path)], noresult},
-           State) ->
-    [Module | Rest] = filename:split(Path),
-    case code:lib_dir(Module) of
-        {error, bad_name} ->
-            Reason = lib_not_found,
-            %% TODO: add error pretty message
-            State1 = add_error(State, error_parsing_include_file, Line, {Path, Reason}),
-            R = {atom, Line, error},
-            {R, State1};
-         ModuleFullPath ->
-            FullPath = filename:absname(filename:join([ModuleFullPath|Rest])),
-            include_macro_file(Line, FullPath, State)
-    end;
+       State) ->
+[Module | Rest] = filename:split(Path),
+case code:lib_dir(Module) of
+    {error, bad_name} ->
+        Reason = lib_not_found,
+        %% TODO: add error pretty message
+        State1 = add_error(State, error_parsing_include_file, Line, {Path, Reason}),
+        R = {atom, Line, error},
+        {R, State1};
+     ModuleFullPath ->
+        FullPath = filename:absname(filename:join([ModuleFullPath|Rest])),
+        include_macro_file(Line, FullPath, State)
+end;
 ast_to_ast({attr, Line, [?Atom(include)], [?V(_, string, Path)], noresult},
-           State=#{module_dir := ModuleDir}) ->
-    AbsPath = filename:absname(filename:join(ModuleDir, Path)),
-    case filelib:is_regular(AbsPath) of
-        true ->
-            include_macro_file(Line, AbsPath, State);
-        false ->
-            Reason = file_not_found,
-            %% TODO: add error pretty message
-            State1 = add_error(State, error_parsing_include_file, Line, {AbsPath, Reason}),
-            R = {atom, Line, error},
-            {R, State1}
-    end;
+       State=#{module_dir := ModuleDir}) ->
+AbsPath = filename:absname(filename:join(ModuleDir, Path)),
+case filelib:is_regular(AbsPath) of
+    true ->
+        include_macro_file(Line, AbsPath, State);
+    false ->
+        Reason = file_not_found,
+        %% TODO: add error pretty message
+        State1 = add_error(State, error_parsing_include_file, Line, {AbsPath, Reason}),
+        R = {atom, Line, error},
+        {R, State1}
+end;
 
 %-behavio[u]r(name)
 ast_to_ast({attr, Line, [?Atom(AttrName)], [?Atom(BName)], noresult},
-           #{level := 0}=State)
-        when AttrName == behavior orelse AttrName == behaviour ->
-    R = {attribute, Line, AttrName, BName},
-    {R, State};
+       #{level := 0}=State)
+    when AttrName == behavior orelse AttrName == behaviour ->
+R = {attribute, Line, AttrName, BName},
+{R, State};
 % top level function
 ast_to_ast(?E(Line, fn, {Name, Attrs, ?E(_CLine, 'case', Cases)}),
-           #{level := 0, fns := Fns, fns_by_name := FnsByName,
-             module := Module, path := Path}=State) ->
-    [FirstCase|_TCases] = Cases,
-    {cmatch, _FCLine, {FCCond, _FCWhen, _FCBody}} = FirstCase,
-    Arity = length(FCCond),
-    {ok, FixedCases} = expand_case_else_match(Cases),
-    BareName = unwrap(Name),
-    StateLevel1 = State#{level := 1, function_name => BareName, function_arity => Arity},
-    {EFixedCases, State1} = ast_to_ast(FixedCases, StateLevel1),
-    EFn = {function, Line, BareName, Arity, EFixedCases},
-    FnRef = {Name, Arity},
-    {R, RestAttrs, State2} = case extract_spec_attr(FnRef, Attrs, [], nil, State1) of
-                              {found, ESpecAttr, IRestAttrs, State21} ->
-                                  {[EFn, ESpecAttr], IRestAttrs, State21};
-                              {notfound, IRestAttrs, State21} ->
-                                  {EFn, IRestAttrs, State21}
-                          end,
-    State3 = add_attributes(State2, fn, Line, {BareName, Arity}, Attrs),
-    State4 = add_attributes(State3, fn_attrs, Line, {BareName, Arity}, RestAttrs),
-    State5 = check_case_arities_equal(Cases, State4, Arity),
-    FnInfo = #{name => BareName, arity => Arity, line => Line, ast => R,
-               module => Module, module_path => Path, attrs => Attrs},
+       #{level := 0, fns := Fns, fns_by_name := FnsByName,
+         module := Module, path := Path}=State) ->
+[FirstCase|_TCases] = Cases,
+{cmatch, _FCLine, {FCCond, _FCWhen, _FCBody}} = FirstCase,
+Arity = length(FCCond),
+{ok, FixedCases} = expand_case_else_match(Cases),
+BareName = unwrap(Name),
+StateLevel1 = State#{level := 1, function_name => BareName, function_arity => Arity},
+{EFixedCases, State1} = ast_to_ast(FixedCases, StateLevel1),
+EFn = {function, Line, BareName, Arity, EFixedCases},
+FnRef = {Name, Arity},
+{R, RestAttrs, State2} = case extract_spec_attr(FnRef, Attrs, [], nil, State1) of
+                          {found, ESpecAttr, IRestAttrs, State21} ->
+                              {[EFn, ESpecAttr], IRestAttrs, State21};
+                          {notfound, IRestAttrs, State21} ->
+                              {EFn, IRestAttrs, State21}
+                      end,
+State3 = add_attributes(State2, fn, Line, {BareName, Arity}, Attrs),
+State4 = add_attributes(State3, fn_attrs, Line, {BareName, Arity}, RestAttrs),
+State5 = check_case_arities_equal(Cases, State4, Arity),
+FnInfo = #{name => BareName, arity => Arity, line => Line, ast => R,
+           module => Module, module_path => Path, attrs => Attrs},
 
-    State6 = check_fn_override(FnInfo, State5),
-    State7 = State6#{level := 0,
-                     fns := [FnInfo|Fns],
-                     fns_by_name := FnsByName#{{BareName, Arity} => FnInfo}},
-    {{fn, BareName, Arity}, State7};
+State6 = check_fn_override(FnInfo, State5),
+State7 = State6#{level := 0,
+                 fns := [FnInfo|Fns],
+                 fns_by_name := FnsByName#{{BareName, Arity} => FnInfo}},
+{{fn, BareName, Arity}, State7};
 
 % record declaration
 ast_to_ast({attr, Line, [?Atom(record)], [?Atom(RecordName)], ?S(_TLine, tuple, Fields)},
-           #{level := 0}=State) ->
-    {RFields, State1} = lists:mapfoldl(fun to_record_field_decl/2,
-                                              State#{level := 1}, Fields),
-    R = {attribute, Line, record, {RecordName, RFields}},
-    {R, State1#{level := 0}};
+       #{level := 0}=State) ->
+{RFields, State1} = lists:mapfoldl(fun to_record_field_decl/2,
+                                          State#{level := 1}, Fields),
+R = {attribute, Line, record, {RecordName, RFields}},
+{R, State1#{level := 0}};
 
 % type and opaque without result, error
 ast_to_ast({attr, Line, [?Atom(Type)], _Params, noresult}=Ast, #{level := 0}=State)
-  when Type == type orelse Type == opaque ->
-    invalid_type_declaration(State, Line, Ast);
+when Type == type orelse Type == opaque ->
+invalid_type_declaration(State, Line, Ast);
 % type and opaque without params, error
 ast_to_ast({attr, Line, [?Atom(Type)], noparams, _Result}=Ast, #{level := 0}=State)
-  when Type == type orelse Type == opaque ->
-    invalid_type_declaration(State, Line, Ast);
+when Type == type orelse Type == opaque ->
+invalid_type_declaration(State, Line, Ast);
 % type and opaque attributes
 ast_to_ast({attr, _Line, [?Atom(Type)], _Params, _Result}=Ast, #{level := 0}=State)
-  when Type == type orelse Type == opaque ->
-    fn_spec:type_to_spec(Ast, State);
+when Type == type orelse Type == opaque ->
+fn_spec:type_to_spec(Ast, State);
 
 % ^<path> <expr>
 ast_to_ast(?T(Line, Path, Ast), State) ->
-    handle_tag(Line, "expr_", Path, Path, Ast, State);
+handle_tag(Line, "expr_", Path, Path, Ast, State);
 
 % #<path> <val>
 ast_to_ast(?LTag(Line, Path, Ast), State) ->
-    handle_tag(Line, "val_", Path, Path, Ast, State);
+handle_tag(Line, "val_", Path, Path, Ast, State);
 
 ast_to_ast(Ast, #{level := 0}=State) ->
-    Line = element(2, Ast),
-    State1 = add_error(State, invalid_top_level_expression, Line, {ast, Ast}),
-    R = {atom, Line, error},
-    {R, State1};
+Line = element(2, Ast),
+State1 = add_error(State, invalid_top_level_expression, Line, {ast, Ast}),
+R = {atom, Line, error},
+{R, State1};
 
 ast_to_ast(?E(_Line, call_do, {Place, Call, Fun}), State) ->
-    with_childs(State, Call, Fun,
-                fun ({call, CallLine, FCall, Args}, EFun) ->
-                        AllArgs = case Place of
-                                      first -> [EFun|Args];
-                                      last  -> Args ++ [EFun]
-                                  end,
-                        {call, CallLine, FCall, AllArgs}
-                end);
+with_childs(State, Call, Fun,
+            fun ({call, CallLine, FCall, Args}, EFun) ->
+                    AllArgs = case Place of
+                                  first -> [EFun|Args];
+                                  last  -> Args ++ [EFun]
+                              end,
+                    {call, CallLine, FCall, AllArgs}
+            end);
 
 % -> and ->>
 ast_to_ast(?E(_Line, call_thread, {InitialVal, Calls}), State) ->
-    Threaded = lists:foldl(fun (Current, Accum) ->
-                                   {Pos, Call} = Current,
-                                   ?E(CallLine, call, {Fun, Args}) = Call,
-                                   NewArgs = case Pos of
-                                                 first -> [Accum|Args];
-                                                 last -> Args ++ [Accum]
-                                             end,
-                                   ?E(CallLine, call, {Fun, NewArgs})
-                end, InitialVal, Calls),
-    ast_to_ast(Threaded, State);
+Threaded = lists:foldl(fun (Current, Accum) ->
+                               {Pos, Call} = Current,
+                               ?E(CallLine, call, {Fun, Args}) = Call,
+                               NewArgs = case Pos of
+                                             first -> [Accum|Args];
+                                             last -> Args ++ [Accum]
+                                         end,
+                               ?E(CallLine, call, {Fun, NewArgs})
+            end, InitialVal, Calls),
+ast_to_ast(Threaded, State);
 
 % list
 ast_to_ast(?S(Line, list, Val), State) ->
-    list_to_cons_list(Line, Val, State);
+list_to_cons_list(Line, Val, State);
 
 % <var>#<map>
 ast_to_ast(?S(Line, map=Type, {Var, KVs}), State) ->
-    {EVar, State1} = ast_to_ast(Var, State),
-    {Items, State2} = state_map(fun to_map_field/2, KVs, State1),
-    R = {Type, Line, EVar, Items},
-    {R, State2};
+{EVar, State1} = ast_to_ast(Var, State),
+{Items, State2} = state_map(fun to_map_field/2, KVs, State1),
+R = {Type, Line, EVar, Items},
+{R, State2};
 % <map>
 ast_to_ast(?S(Line, map=Type, KVs), State) ->
-    {Items, State1} = state_map(fun to_map_field/2, KVs, State),
-    R = {Type, Line, Items},
-    {R, State1};
+{Items, State1} = state_map(fun to_map_field/2, KVs, State),
+R = {Type, Line, Items},
+{R, State1};
 
 % tuple
 ast_to_ast(?S(Line, tuple=Type, Val), State)   ->
-    {EVal, State1} = ast_to_ast(Val, State),
-    {{Type, Line, EVal}, State1};
+{EVal, State1} = ast_to_ast(Val, State),
+{{Type, Line, EVal}, State1};
 
 % <val> :: <val>
 ast_to_ast(?S(Line, cons=Type, {H, T}), State) ->
-    with_childs(State, H, T, fun (EH, ET) -> {Type, Line, EH, ET} end);
+with_childs(State, H, T, fun (EH, ET) -> {Type, Line, EH, ET} end);
 
 % function reference
 ast_to_ast(?V(Line, fn_ref, {[Mod, Fun], Arity}), State) ->
-    with_childs(State, Mod, Fun, Arity,
-                fun (EMod, EFun, EArity) ->
-                        {'fun', Line, {function, EMod, EFun, EArity}}
-                end);
+with_childs(State, Mod, Fun, Arity,
+            fun (EMod, EFun, EArity) ->
+                    {'fun', Line, {function, EMod, EFun, EArity}}
+            end);
 
 % function reference
 ast_to_ast(?V(Line, fn_ref, {[?Var(Fun)=FunAst], Arity}), State) ->
-    State1 = add_error(State, invalid_fn_ref, Line,
-              expected_got("atom", {ast, FunAst})),
-    R = {'fun', Line, {function, Fun, unwrap(Arity)}},
-    {R, State1};
+State1 = add_error(State, invalid_fn_ref, Line,
+          expected_got("atom", {ast, FunAst})),
+R = {'fun', Line, {function, Fun, unwrap(Arity)}},
+{R, State1};
 
 % function reference
 ast_to_ast(?V(Line, fn_ref, {[Fun], Arity}), State) ->
-    R = {'fun', Line, {function, unwrap(Fun), unwrap(Arity)}},
-    {R, State};
+R = {'fun', Line, {function, unwrap(Fun), unwrap(Arity)}},
+{R, State};
 
 % when
 ast_to_ast(?E(Line, 'when', Clauses), State) ->
-    {EClauses, State1} = ast_to_ast(Clauses, State),
-    R = {'if', Line, EClauses},
-    {R, State1};
+{EClauses, State1} = ast_to_ast(Clauses, State),
+R = {'if', Line, EClauses},
+{R, State1};
 
 % when condition
 ast_to_ast({wcond, Line, Cond, Body}, State) ->
-    {ECond, State1} = when_to_ast(Cond, State),
-    {EBody, State2} = ast_to_ast(Body, State1),
-    R = {clause, Line, [], ECond, EBody},
-    {R, State2};
+{ECond, State1} = when_to_ast(Cond, State),
+{EBody, State2} = ast_to_ast(Body, State1),
+R = {clause, Line, [], ECond, EBody},
+{R, State2};
 
 % when else
 ast_to_ast({welse, Line, Body}, State) ->
-    {EBody, State1} = ast_to_ast(Body, State),
-    R = {clause, Line, [], [[{atom, Line, true}]], EBody},
-    {R, State1};
+{EBody, State1} = ast_to_ast(Body, State),
+R = {clause, Line, [], [[{atom, Line, true}]], EBody},
+{R, State1};
 
 % list comprehension
 ast_to_ast(?E(Line, 'for', {Qualifiers, Body}), State) ->
-    {Items, EBody, State1} = lc_to_ast(Line, Qualifiers, Body, State),
-    R = {lc, Line, EBody, Items},
-    {R, State1};
+{Items, EBody, State1} = lc_to_ast(Line, Qualifiers, Body, State),
+R = {lc, Line, EBody, Items},
+{R, State1};
 
 % try expression
 ast_to_ast(?E(Line, 'try', {Body, Catch, After}), State) ->
-    {EBody, State1} = ast_to_ast(Body, State),
-    {ECatch, State2} = case Catch of
-                           ?E(_CLine, 'case', Clauses) ->
-                               state_map(fun ast_to_catch/2, Clauses, State);
-                           nocatch -> {[], State1}
-                       end,
+{EBody, State1} = ast_to_ast(Body, State),
+{ECatch, State2} = case Catch of
+                       ?E(_CLine, 'case', Clauses) ->
+                           state_map(fun ast_to_catch/2, Clauses, State);
+                       nocatch -> {[], State1}
+                   end,
 
-    {EAfter, State3} = case After of
-                           noafter -> {[], State2};
-                           AfterBody -> ast_to_ast(AfterBody, State2)
-                       end,
-    R = {'try', Line, EBody, [], ECatch, EAfter},
-    {R, State3};
+{EAfter, State3} = case After of
+                       noafter -> {[], State2};
+                       AfterBody -> ast_to_ast(AfterBody, State2)
+                   end,
+R = {'try', Line, EBody, [], ECatch, EAfter},
+{R, State3};
 
 % receive without case clauses
 ast_to_ast(?E(Line, 'receive', {[], {After, AfterBody}}), State) ->
-    with_childs(State, After, AfterBody,
-                fun(EAfter, EAfterBody) ->
-                        {'receive', Line, [], EAfter, EAfterBody}
-                end);
+with_childs(State, After, AfterBody,
+            fun(EAfter, EAfterBody) ->
+                    {'receive', Line, [], EAfter, EAfterBody}
+            end);
 
 % receive with case clauses and no after
 ast_to_ast(?E(Line, 'receive', {?E(_CLine, 'case', Clauses), noafter}), State) ->
-    {EClauses, State1} = ast_to_ast(Clauses, State),
-    TupleClauses = lists:map(fun to_tuple_clause/1, EClauses),
-    R= {'receive', Line, TupleClauses},
-    {R, State1};
+{EClauses, State1} = ast_to_ast(Clauses, State),
+TupleClauses = lists:map(fun to_tuple_clause/1, EClauses),
+R= {'receive', Line, TupleClauses},
+{R, State1};
 
 % receive with case clauses and after
 ast_to_ast(?E(Line, 'receive', {?E(_CLine, 'case', Clauses), {After, AfterBody}}), State) ->
-    with_childs(State, Clauses, After, AfterBody,
-                fun(EClauses, EAfter, EAfterBody) ->
-                        TupleClauses = lists:map(fun to_tuple_clause/1, EClauses),
-                        {'receive', Line, TupleClauses, EAfter, EAfterBody}
-                end);
+with_childs(State, Clauses, After, AfterBody,
+            fun(EClauses, EAfter, EAfterBody) ->
+                    TupleClauses = lists:map(fun to_tuple_clause/1, EClauses),
+                    {'receive', Line, TupleClauses, EAfter, EAfterBody}
+            end);
 
 % match
 ast_to_ast(?E(Line, switch, {Value, ?E(_CaseLine, 'case', Clauses)}), State) ->
-    with_childs(State, Clauses, Value,
-                fun(EClauses, EValue) ->
-                        TupleClauses = lists:map(fun to_tuple_clause/1, EClauses),
-                        {'case', Line, EValue, TupleClauses}
-                end);
+with_childs(State, Clauses, Value,
+            fun(EClauses, EValue) ->
+                    TupleClauses = lists:map(fun to_tuple_clause/1, EClauses),
+                    {'case', Line, EValue, TupleClauses}
+            end);
 
 % match clause
 ast_to_ast({cmatch, Line, {Conds, When, Body}}, State) ->
-    {EConds, State1} = ast_to_ast(Conds, State),
-    {EWhen, State2} = when_to_ast(When, State1),
-    {EBody, State3} = ast_to_ast(Body, State2),
-    R = {clause, Line, EConds, EWhen, EBody},
-    {R, State3};
+{EConds, State1} = ast_to_ast(Conds, State),
+{EWhen, State2} = when_to_ast(When, State1),
+{EBody, State3} = ast_to_ast(Body, State2),
+R = {clause, Line, EConds, EWhen, EBody},
+{R, State3};
 
 % match else clause
 ast_to_ast({celse, Line, Body}, State) ->
-    {EBody, State1} = ast_to_ast(Body, State),
-    R = {clause, Line, [{var, Line, '_'}], [], EBody},
-    {R, State1};
+{EBody, State1} = ast_to_ast(Body, State),
+R = {clause, Line, [{var, Line, '_'}], [], EBody},
+{R, State1};
 
 % begin
 ast_to_ast(?E(Line, 'begin', Body), State) ->
-    {EBody, State1} = ast_to_ast(Body, State),
-    R = {block, Line, EBody},
-    {R, State1};
+{EBody, State1} = ast_to_ast(Body, State),
+R = {block, Line, EBody},
+{R, State1};
 
 % fn
 ast_to_ast(?E(Line, fn, ?E(_CLine, 'case', Cases)), State) ->
-    {ok, FixedCases} = expand_case_else_match(Cases),
-    {EFixedCases, State1} = ast_to_ast(FixedCases, State),
-    R = {'fun', Line, {clauses, EFixedCases}},
-    {R, State1};
+{ok, FixedCases} = expand_case_else_match(Cases),
+{EFixedCases, State1} = ast_to_ast(FixedCases, State),
+R = {'fun', Line, {clauses, EFixedCases}},
+{R, State1};
 
 % named fn
 ast_to_ast(?E(Line, fn, {?V(_VLine, var, FName), ?E(_CLine, 'case', Cases)}), State) ->
-    {ok, FixedCases} = expand_case_else_match(Cases),
-    {EFixedCases, State1} = ast_to_ast(FixedCases, State),
-    R = {named_fun, Line, FName, EFixedCases},
-    {R, State1};
+{ok, FixedCases} = expand_case_else_match(Cases),
+{EFixedCases, State1} = ast_to_ast(FixedCases, State),
+R = {named_fun, Line, FName, EFixedCases},
+{R, State1};
 
 % call
 ast_to_ast(?E(Line, call, {[Mod, Fun], Args}), State) ->
-    with_childs(State, Mod, Fun, Args,
-                fun (EMod, EFun, EArgs) ->
-                        {call, Line, {remote, Line, EMod, EFun}, EArgs}
-                end);
+with_childs(State, Mod, Fun, Args,
+            fun (EMod, EFun, EArgs) ->
+                    {call, Line, {remote, Line, EMod, EFun}, EArgs}
+            end);
 
 % call
 ast_to_ast(?E(Line, call, {[Fun], Args}), State) ->
-    with_childs(State, Fun, Args,
-                fun (EFun, EArgs) -> {call, Line, EFun, EArgs} end);
+with_childs(State, Fun, Args,
+            fun (EFun, EArgs) -> {call, Line, EFun, EArgs} end);
 
 % =
 ast_to_ast(?O(Line, '=', Left, Right), State) ->
-    with_childs(State, Left, Right,
-                fun (ELeft, ERight) -> {match, Line, ELeft, ERight} end);
+with_childs(State, Left, Right,
+            fun (ELeft, ERight) -> {match, Line, ELeft, ERight} end);
 
 % ops
 ast_to_ast(?O(Line, Op, Left, Right), State) ->
-    with_childs(State, Left, Right,
-                fun (ELeft, ERight) -> {op, Line, map_op(Op), ELeft, ERight} end);
+with_childs(State, Left, Right,
+            fun (ELeft, ERight) -> {op, Line, map_op(Op), ELeft, ERight} end);
 
 % values
 ast_to_ast(?V(Line, atom=Type, Val), State)    -> {{Type, Line, Val}, State};
@@ -390,31 +390,31 @@ ast_to_ast(?V(Line, boolean, Val), State)      -> {{atom, Line, Val}, State};
 ast_to_ast(?V(Line, var=Type, Val), State)     -> {{Type, Line, Val}, State};
 ast_to_ast(?V(Line, string=Type, Val), State)  -> {{Type, Line, Val}, State};
 ast_to_ast(?V(Line, bstring, Val), State) ->
-    R = {bin, Line, [{bin_element, Line, {string, Line, Val}, default, default}]},
-    {R, State};
+R = {bin, Line, [{bin_element, Line, {string, Line, Val}, default, default}]},
+{R, State};
 
 % unary ops
 ast_to_ast(?UO(Line, Op, Val), State) ->
-    {EVal, State1} = ast_to_ast(Val, State),
-    R = {op, Line, map_op(Op), EVal},
-    {R, State1};
+{EVal, State1} = ast_to_ast(Val, State),
+R = {op, Line, map_op(Op), EVal},
+{R, State1};
 
 ast_to_ast(Ast, State) ->
-    Line = element(2, Ast),
-    State1 = add_error(State, invalid_expression, Line, {ast, Ast}),
-    R = {atom, Line, error},
-    {R, State1}.
+Line = element(2, Ast),
+State1 = add_error(State, invalid_expression, Line, {ast, Ast}),
+R = {atom, Line, error},
+{R, State1}.
 
 
 ast_to_ast([], Accum, State) ->
-    {lists:reverse(Accum), State};
+{lists:reverse(Accum), State};
 ast_to_ast([H|T], Accum, State) ->
-    {EH, State1} = ast_to_ast(H, State),
-    NewAccum = if is_list(EH) -> EH ++ Accum;
-                  EH == 'fn compiler ignore' -> Accum;
-                  true -> [EH|Accum]
-               end,
-    ast_to_ast(T, NewAccum, State1).
+{EH, State1} = ast_to_ast(H, State),
+NewAccum = if is_list(EH) -> EH ++ Accum;
+              EH == 'fn compiler ignore' -> Accum;
+              true -> [EH|Accum]
+           end,
+ast_to_ast(T, NewAccum, State1).
 
 map_op('=') -> '=';
 map_op('+') -> '+';
@@ -479,84 +479,84 @@ map_op_reverse('/=') -> '!=';
 map_op_reverse('=/=') -> 'isnt'.
 
 list_to_cons_list(Line, Val, State) ->
-    list_to_cons_list_r(Line, lists:reverse(Val), {nil, Line}, State).
+list_to_cons_list_r(Line, lists:reverse(Val), {nil, Line}, State).
 
 list_to_cons_list_r(_Line, [], Cons, State) ->
-    {Cons, State};
+{Cons, State};
 
 list_to_cons_list_r(Line, [H|T], Cons, State) ->
-    {EH, State1} = ast_to_ast(H, State),
-    list_to_cons_list_r(Line, T, {cons, Line, EH, Cons}, State1).
+{EH, State1} = ast_to_ast(H, State),
+list_to_cons_list_r(Line, T, {cons, Line, EH, Cons}, State1).
 
 ast_to_export_fun(?O(_Line, '/', ?Atom(FunName), ?V(_ArLine, integer, Arity)), State) ->
-    R = {FunName, Arity},
-    {R, State};
+R = {FunName, Arity},
+{R, State};
 ast_to_export_fun(Ast, State) ->
-    Line = element(2, Ast),
-    State1 = add_error(State, invalid_export, Line,
-                       expected_got("funname/Arity", {ast, Ast})),
-    {{atom, Line, error}, State1}.
+Line = element(2, Ast),
+State1 = add_error(State, invalid_export, Line,
+                   expected_got("funname/Arity", {ast, Ast})),
+{{atom, Line, error}, State1}.
 
 ast_to_catch({cmatch, Line, {[Match], When, Body}}, State) ->
-    cmatch_to_catch(Line, ?V(Line, atom, throw), Match, When, Body, State);
+cmatch_to_catch(Line, ?V(Line, atom, throw), Match, When, Body, State);
 ast_to_catch({cmatch, Line, {[?V(_ALine, atom, throw=_ClassName)=CN, Match], When, Body}}, State) ->
-    cmatch_to_catch(Line, CN, Match, When, Body, State);
+cmatch_to_catch(Line, CN, Match, When, Body, State);
 ast_to_catch({cmatch, Line, {[?V(_ALine, atom, error=_ClassName)=CN, Match], When, Body}}, State) ->
-    cmatch_to_catch(Line, CN, Match, When, Body, State);
+cmatch_to_catch(Line, CN, Match, When, Body, State);
 ast_to_catch({cmatch, Line, {[?V(_ALine, atom, exit=_ClassName)=CN, Match], When, Body}}, State) ->
-    cmatch_to_catch(Line, CN, Match, When, Body, State);
+cmatch_to_catch(Line, CN, Match, When, Body, State);
 ast_to_catch({cmatch, Line, {[?V(_ALine, var, _VarName)=Var, Match], When, Body}}, State) ->
-    cmatch_to_catch(Line, Var, Match, When, Body, State);
+cmatch_to_catch(Line, Var, Match, When, Body, State);
 ast_to_catch({celse, Line, Body}, State) ->
-    EMatch = {tuple, Line, [{var, Line, '_'}, {var, Line, '_'}, {var, Line, '_'}]},
-    {EBody, State1} = ast_to_ast(Body, State),
-    R = {clause, Line, [EMatch], [], EBody},
-    {R, State1};
+EMatch = {tuple, Line, [{var, Line, '_'}, {var, Line, '_'}, {var, Line, '_'}]},
+{EBody, State1} = ast_to_ast(Body, State),
+R = {clause, Line, [EMatch], [], EBody},
+{R, State1};
 ast_to_catch({cmatch, Line, {Match, _When, _Body}}, State) ->
-    State1 = add_error(State, invalid_catch, Line,
-                       expected_got("throw:T, error:E, exit:X or T",
-                                    {ast, ?S(Line, tuple, Match)})),
-    {{atom, Line, error}, State1}.
+State1 = add_error(State, invalid_catch, Line,
+                   expected_got("throw:T, error:E, exit:X or T",
+                                {ast, ?S(Line, tuple, Match)})),
+{{atom, Line, error}, State1}.
 
 cmatch_to_catch(Line, Class, Match, When, Body, State) ->
-    {EClass, State1} = ast_to_ast(Class, State),
-    {EMatch, State2} = ast_to_ast(Match, State1),
-    ETupleMatch = {tuple, Line, [EClass, EMatch, {var, Line, '_'}]},
-    {EBody, State3} = ast_to_ast(Body, State2),
-    {EWhen, State4} = when_to_ast(When, State3),
-    R = {clause, Line, [ETupleMatch], EWhen, EBody},
-    {R, State4}.
+{EClass, State1} = ast_to_ast(Class, State),
+{EMatch, State2} = ast_to_ast(Match, State1),
+ETupleMatch = {tuple, Line, [EClass, EMatch, {var, Line, '_'}]},
+{EBody, State3} = ast_to_ast(Body, State2),
+{EWhen, State4} = when_to_ast(When, State3),
+R = {clause, Line, [ETupleMatch], EWhen, EBody},
+{R, State4}.
 
 when_to_ast(nowhen, State) -> {[], State};
 when_to_ast(When, State) when is_list(When) ->
-    state_map(fun when_to_ast/2, When, State);
+state_map(fun when_to_ast/2, When, State);
 when_to_ast(When, State) ->
-    ast_to_ast(When, State).
+ast_to_ast(When, State).
 
 kv_to_ast(Key, Val, State) ->
-    with_childs(State, Key, Val, fun (EKey, EVal) -> {EKey, EVal} end).
+with_childs(State, Key, Val, fun (EKey, EVal) -> {EKey, EVal} end).
 
 to_map_field({kv, Line, Key, Val}, State) ->
-    {{EKey, EVal}, State1} = kv_to_ast(Key, Val, State),
-    R = {map_field_assoc, Line, EKey, EVal},
-    {R, State1};
+{{EKey, EVal}, State1} = kv_to_ast(Key, Val, State),
+R = {map_field_assoc, Line, EKey, EVal},
+{R, State1};
 to_map_field({kvmatch, Line, Key, Val}, State) ->
-    {{EKey, EVal}, State1} = kv_to_ast(Key, Val, State),
-    R = {map_field_exact, Line, EKey, EVal},
-    {R, State1}.
+{{EKey, EVal}, State1} = kv_to_ast(Key, Val, State),
+R = {map_field_exact, Line, EKey, EVal},
+{R, State1}.
 
 % erlang ast
 % NOTE for now empty case in switch matches the empty tuple
 to_tuple_clause({clause, Line, [], Guard, Body}) ->
-    {clause, Line, [{tuple, Line, []}], Guard, Body};
+{clause, Line, [{tuple, Line, []}], Guard, Body};
 to_tuple_clause({clause, _Line, [_Match], _Guard, _Body}=Ast) ->
-    Ast;
+Ast;
 to_tuple_clause({clause, Line, Matches, Guard, Body}) ->
-    {clause, Line, [{tuple, Line, Matches}], Guard, Body}.
+{clause, Line, [{tuple, Line, Matches}], Guard, Body}.
 
 for_qualifier_to_ast({filter, Ast}, State) -> ast_to_ast(Ast, State);
 for_qualifier_to_ast({Gen, Line, Left, Right}, State)
-        when Gen =:= generate orelse Gen =:= b_generate ->
+    when Gen =:= generate orelse Gen =:= b_generate ->
     {{ELeft, ERight}, State1} = kv_to_ast(Left, Right, State),
     R = {generate, Line, ELeft, ERight},
     {R, State1}.
