@@ -55,7 +55,8 @@ can_expand_macro_str(Config) ->
     {ok, [{string, _, "42 - 43"}]} = exp(Macros, {'Text', 1}, #{'Val' => AstNode}),
 
     {ok, [Ast]} = exp(Macros, {'TESTCALL', 1}, #{'Call' => AstNode}),
-    "io:format(\"Call ~s: ~w~n\", [\"42 - 43\",42 - 43])" = lists:flatten(erl_pp:expr(Ast)).
+    R = lists:flatten(erl_pp:expr(Ast)),
+    "io:format(\"Call ~s: ~w~n\", [\"42 - 43\", 42 - 43])" = R.
 
 can_expand_macro_lex_str(Config) ->
     MacroPath = macro_path(Config),
@@ -69,14 +70,14 @@ can_expand_simple_inner_macro_call(Config) ->
     {ok, Macros} = fn_erl_macro:macro_defs(MacroPath),
     AstNode = {op, 1, '-', {integer, 1, 42}, {integer, 1, 43}},
     {ok, [Ast]} = exp(Macros, {'Int', 1}, #{'Val' => AstNode}),
-    "{val,_,integer,42 - 43}" = lists:flatten(erl_pp:expr(Ast)),
+    "{val, _, integer, 42 - 43}" = lists:flatten(erl_pp:expr(Ast)),
 
     {ok, [Ast1]} = exp(Macros, {'Int', 2}, #{'Line' => AstNode, 'Val' => {integer, 1, 12}}),
-    "{val,42 - 43,integer,12}" = lists:flatten(erl_pp:expr(Ast1)).
+    "{val, 42 - 43, integer, 12}" = lists:flatten(erl_pp:expr(Ast1)).
 
 can_expand_inner_macro_call_in_expr(Config) ->
     MacroPath = macro_path(Config),
     {ok, Macros} = fn_erl_macro:macro_defs(MacroPath),
     AstNode = {op, 1, '-', {integer, 1, 42}, {integer, 1, 43}},
     {ok, [Ast]} = exp(Macros, {'Int1', 2}, #{'Line' => AstNode, 'Val' => {integer, 1, 12}}),
-    "1 + {val,42 - 43,integer,12}" = lists:flatten(erl_pp:expr(Ast)).
+    "1 + {val, 42 - 43, integer, 12}" = lists:flatten(erl_pp:expr(Ast)).
